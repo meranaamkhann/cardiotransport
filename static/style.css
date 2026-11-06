@@ -1,0 +1,14 @@
+:root{--ink:#10292f;--paper:#f6f8f7;--line:#cfdad7;--teal:#0e6b73;--red:#b04030;--amber:#8a5a00}
+*{box-sizing:border-box}body{margin:0;font:16px/1.55 system-ui,sans-serif;background:var(--paper);color:var(--ink)}
+header{display:flex;gap:1.5rem;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:.9rem 1.5rem;border-bottom:2px solid var(--ink)}
+.brand{font:700 1.25rem Georgia,serif;color:var(--ink);text-decoration:none}nav a{margin-left:1.2rem;color:var(--teal);text-decoration:none;font-weight:600}
+a:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid var(--teal);outline-offset:2px}
+main{max-width:1080px;margin:0 auto;padding:1.5rem}h1{font:700 2rem/1.2 Georgia,serif;max-width:22ch}h2{font:700 1.2rem Georgia,serif;margin-top:2rem}
+.lede{max-width:62ch}.muted{color:#4d6a6f}.grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:2rem}@media(max-width:800px){.grid{grid-template-columns:1fr}}
+fieldset{border:1px solid var(--line);margin:0 0 1rem;padding:.8rem 1rem;display:grid;grid-template-columns:1fr 1fr;gap:.6rem 1rem}legend{font-weight:700;padding:0 .4rem}
+label{display:flex;flex-direction:column;font-size:.9rem}input,select{padding:.45rem;border:1px solid var(--line);border-radius:3px;background:#fff;font:inherit}
+button{background:var(--ink);color:#fff;border:0;padding:.7rem 1.6rem;font:600 1rem system-ui;border-radius:3px;cursor:pointer}
+.big{font:700 3rem Georgia,serif}.pair{display:flex;gap:2rem;flex-wrap:wrap}.bar{display:flex;align-items:center;gap:.5rem;font-size:.9rem;margin:.2rem 0}.bar span{width:90px}.bar i{display:block;height:12px}
+.flag{border-left:4px solid var(--amber);background:#fff6e0;padding:.4rem .8rem;margin:.4rem 0;font-size:.9rem}.scroll{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:.9rem}th,td{border:1px solid var(--line);padding:.35rem .6rem;text-align:left}td{font-variant-numeric:tabular-nums}.heat td{text-align:center}
+footer{padding:1.2rem 1.5rem;border-top:1px solid var(--line);font-size:.85rem;color:#4d6a6f}

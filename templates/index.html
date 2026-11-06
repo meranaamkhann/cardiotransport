@@ -1,0 +1,25 @@
+{% extends "base.html" %}{% block c %}
+<h1>How far can a heart-risk model travel?</h1>
+<p class="lede">Enter patient measurements, then choose the hospital population you expect. The model's probability is shown raw and adjusted to that population's disease prevalence.</p>
+<div class="grid"><form id="f">
+<fieldset><legend>Patient</legend>
+<label>Age<input name="age" type="number" value="55"></label>
+<label>Sex<select name="sex"><option value="1">Male</option><option value="0">Female</option></select></label>
+<label>Chest pain<select name="cp"><option value="1">Typical angina</option><option value="2">Atypical angina</option><option value="3">Non-anginal</option><option value="4" selected>Asymptomatic</option></select></label>
+<label>Resting BP (mmHg)<input name="trestbps" type="number" value="130"></label>
+<label>Cholesterol (mg/dl)<input name="chol" type="number" value="240"></label>
+<label>Fasting sugar &gt;120<select name="fbs"><option value="0">No</option><option value="1">Yes</option></select></label>
+<label>Resting ECG<select name="restecg"><option value="0">Normal</option><option value="1">ST-T abnormality</option><option value="2">LV hypertrophy</option></select></label>
+<label>Max heart rate<input name="thalach" type="number" value="150"></label>
+<label>Exercise angina<select name="exang"><option value="0">No</option><option value="1">Yes</option></select></label>
+<label>ST depression<input name="oldpeak" type="number" step="0.1" value="1.0"></label></fieldset>
+<fieldset><legend>Optional: rarely available outside Cleveland</legend>
+<label>ST slope<select name="slope"><option value="">Unknown</option><option value="1">Up</option><option value="2">Flat</option><option value="3">Down</option></select></label>
+<label>Vessels (fluoroscopy)<select name="ca"><option value="">Unknown</option><option>0</option><option>1</option><option>2</option><option>3</option></select></label>
+<label>Thalassemia<select name="thal"><option value="">Unknown</option><option value="3">Normal</option><option value="6">Fixed defect</option><option value="7">Reversible defect</option></select></label></fieldset>
+<fieldset><legend>Target population</legend>
+<label>Hospital<select id="site"><option value="{{ dev|round(1) }}">Cleveland ({{ dev|round(1) }}%)</option>{% for k,v in sites.items() if k!='Cleveland' %}<option value="{{ v.prev }}">{{ k }} ({{ v.prev }}%)</option>{% endfor %}<option value="">Custom prevalence</option></select></label>
+<label>Disease prevalence %<input name="site_prev" id="prev" type="number" value="{{ dev|round(1) }}"></label></fieldset>
+<button>Estimate</button></form>
+<section id="out" aria-live="polite"><p class="muted">Results appear here.</p></section></div>
+{% endblock %}{% block s %}<script src="/static/app.js"></script>{% endblock %}
