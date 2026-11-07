@@ -1,0 +1,8 @@
+node_modules
+frontend/dist
+backend/artifacts/*.joblib
+backend/artifacts/model_card.json
+backend/data/raw/*.data
+__pycache__
+.pytest_cache
+.venv
