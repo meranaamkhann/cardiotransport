@@ -1,9 +1,10 @@
+import { authHeader } from "./session";
 import type { AssessmentPayload, AssessmentResult, ClinicResult, ModelCard, WellnessPayload, WellnessResult } from "./types";
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+export async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   let response: Response;
   try {
-    response = await fetch(path, init);
+    response = await fetch(path, { ...init, headers: { ...(init.headers as Record<string, string> | undefined), ...authHeader() } });
   } catch {
     throw new Error("Could not reach the server. Check your connection and try again.");
   }

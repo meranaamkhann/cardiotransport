@@ -140,3 +140,13 @@ def test_demo_is_labelled_synthetic_and_paper_results_available(client):
 
 def test_health_reports_database(client):
     assert client.get("/api/health").json()["database"] == "ok"
+
+
+def test_inspect_lists_columns_and_sites(client):
+    researcher = staff(client, "researcher")
+    raw, _ = small_csv()
+    body = client.post("/api/research/inspect", headers=headers(researcher), files={"file": ("d.csv", io.BytesIO(raw))}).json()
+    site = next(c for c in body["columns"] if c["name"] == "site")
+    assert "Hospital A" in site["values"] and body["rows"] > 400
+    _, patient = signup(client)
+    assert client.post("/api/research/inspect", headers=headers(patient), files={"file": ("d.csv", io.BytesIO(raw))}).status_code == 403

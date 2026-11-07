@@ -183,3 +183,11 @@ table.plain.wide { min-width: 520px; }
   .card, .notice { break-inside: avoid; border-color: #999; }
   main { max-width: none; padding: 0; }
 }
+
+main.wide { max-width: 1120px; }
+.stack { display: grid; gap: 12px; }
+.scroll { overflow-x: auto; }
+.tbl { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+.tbl th, .tbl td { border-bottom: 1px solid var(--line); padding: 6px 8px; text-align: left; }
+.heat th, .heat td { text-align: center; }
+textarea, select { font: inherit; padding: 8px 10px; border: 1.5px solid var(--line); border-radius: 10px; background: #fff; color: var(--ink); width: 100%; }

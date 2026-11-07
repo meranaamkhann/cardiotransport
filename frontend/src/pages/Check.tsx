@@ -1,3 +1,5 @@
+import { saveSymptom } from "../platformApi";
+import { getSession } from "../session";
 import { useState } from "react";
 import { assess } from "../api";
 import { loadCalibrations } from "../storage";
@@ -97,7 +99,8 @@ export default function Check({ pathway, onResult }: { pathway: Pathway; onResul
     };
     setBusy(true);
     try {
-      onResult(await assess(payload));
+      const account = getSession();
+      onResult(account?.role === "patient" ? (await saveSymptom(payload)).result : await assess(payload));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Something went wrong.");
       setBusy(false);

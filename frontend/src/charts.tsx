@@ -89,3 +89,41 @@ export function CalibrationChart({ curves, label }: {
     </figure>
   );
 }
+
+export function LineChart({ x, series, label, yLabel }: {
+  x: string[]; series: { name: string; values: (number | null)[]; dashed?: boolean }[]; label: string; yLabel: string;
+}) {
+  const width = 560, height = 260, left = 52, bottom = 36, top = 12, right = 10;
+  const all = series.flatMap((s) => s.values.filter((v): v is number => v !== null));
+  const lo = Math.min(...all, 0), hi = Math.max(...all, 0.001);
+  const pad = (hi - lo) * 0.08 || 0.01;
+  const min = lo < 0 ? lo - pad : lo, max = hi + pad;
+  const px = (i: number) => left + (x.length === 1 ? 0.5 : i / (x.length - 1)) * (width - left - right);
+  const py = (v: number) => top + (1 - (v - min) / (max - min)) * (height - top - bottom);
+  const step = Math.ceil(x.length / 8);
+  return (
+    <figure className="chart">
+      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={label}>
+        {[0, 1, 2, 3, 4].map((k) => {
+          const v = min + ((max - min) * k) / 4;
+          return (
+            <g key={k}>
+              <line x1={left} x2={width - right} y1={py(v)} y2={py(v)} className="grid" />
+              <text x={left - 6} y={py(v) + 4} textAnchor="end" className="tick">{v.toFixed(2)}</text>
+            </g>
+          );
+        })}
+        {x.map((label2, i) => i % step === 0 && <text key={label2} x={px(i)} y={height - 16} textAnchor="middle" className="tick">{label2}</text>)}
+        {series.map((s, si) => (
+          <polyline key={s.name} fill="none" stroke={s.dashed ? "#7b8b90" : PALETTE[si % PALETTE.length]} strokeWidth={2.2}
+            strokeDasharray={s.dashed ? "5 4" : undefined}
+            points={s.values.map((v, i) => (v === null ? null : `${px(i)},${py(v)}`)).filter(Boolean).join(" ")} />
+        ))}
+        <text x={10} y={height / 2} textAnchor="middle" className="tick" transform={`rotate(-90 10 ${height / 2})`}>{yLabel}</text>
+      </svg>
+      <figcaption className="legend">
+        {series.map((s, i) => <span key={s.name}><i style={{ background: s.dashed ? "#7b8b90" : PALETTE[i % PALETTE.length] }} />{s.name}</span>)}
+      </figcaption>
+    </figure>
+  );
+}

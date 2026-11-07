@@ -266,6 +266,21 @@ def build_router(ctx):
             raise HTTPException(422, str(error))
         return keep(s, user, name, "uploaded", report)
 
+    @router.post("/research/inspect")
+    def inspect(file: UploadFile = File(...), user: User = Depends(need("researcher"))):
+        raw = file.file.read(MAX_UPLOAD + 1)
+        if len(raw) > MAX_UPLOAD:
+            raise HTTPException(413, "The file is larger than 10 MB.")
+        try:
+            frame = pd.read_csv(io.BytesIO(raw))
+        except Exception:
+            raise HTTPException(422, "The file could not be read as a CSV.")
+        columns = []
+        for c in frame.columns:
+            values = frame[c].dropna().unique()
+            columns.append({"name": str(c), "values": sorted(str(v) for v in values)[:40] if len(values) <= 40 else None})
+        return {"rows": len(frame), "columns": columns}
+
     @router.post("/research/experiments/demo", status_code=201)
     def run_demo(user: User = Depends(need("researcher")), s: Session = Depends(db)):
         frame, cfg = research_demo.synthetic()

@@ -1,3 +1,5 @@
+import { saveWellness } from "../platformApi";
+import { getSession } from "../session";
 import { useState } from "react";
 import { wellness } from "../api";
 import type { WellnessPayload, WellnessResult } from "../types";
@@ -28,7 +30,8 @@ export default function Wellness({ onResult }: { onResult: (r: WellnessResult, s
     setError("");
     setBusy(true);
     try {
-      onResult(await wellness(payload), `${age} y, ${f.sex}`);
+      const account = getSession();
+      onResult(account?.role === "patient" ? (await saveWellness(payload)).result : await wellness(payload), `${age} y, ${f.sex}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Something went wrong.");
       setBusy(false);

@@ -1,0 +1,24 @@
+{% extends "base.html" %}{% block c %}
+<h1>{{ r.meta.name }}</h1>
+<p class="muted">Trained on {{ r.meta.dev_site }} ({{ r.sites[r.meta.dev_site].n }} rows). Tested without refitting on {{ r.external.logistic_portable|length }} other sites. Outcome: {{ r.meta.target }}.</p>
+<p><a href="/report/{{ rid }}/json">Download full results (JSON)</a></p>
+{% for w in r.warnings %}<div class="flag warn">{{ w }}</div>{% endfor %}
+<h2>Verdict per site</h2>
+{% for v in r.verdicts %}<div class="flag {{ v.level }}"><strong>{{ v.site }}</strong>: {{ v.status }}</div>{% endfor %}
+<h2>Features</h2><p>Portable (available at every site): {{ r.meta.portable|join(", ") }}.</p>
+{% if r.meta.dropped %}<p>Excluded from the portable model because more than 30% is missing somewhere: {{ r.meta.dropped|join(", ") }}.</p>{% endif %}
+<h2>Ranking: AUC by site</h2><canvas id="auc" role="img" aria-label="Bar chart of AUC by site and model; the table below gives the same numbers." height="110"></canvas>
+<div class="scroll"><table><tr><th>Model</th><th>Internal AUC</th>{% for s in r.external.logistic_portable %}<th>{{ s }}</th>{% endfor %}</tr>
+{% for k,v in r.external.items() %}<tr><td>{{ k.replace("_"," ") }}</td><td>{{ r.internal[k].auc }}</td>{% for s,m in v.items() %}<td>{{ m.auc }}{% if m.auc_ci %} ({{ m.auc_ci[0] }}-{{ m.auc_ci[1] }}){% endif %}</td>{% endfor %}</tr>{% endfor %}</table></div>
+<h2>Calibration of the portable logistic model</h2><p class="muted">Points on the dashed line mean predicted risk matches observed risk.</p><canvas id="cal" role="img" aria-label="Calibration curves per site; the table below gives intercepts and slopes." height="130"></canvas>
+<div class="scroll"><table><tr><th>Site</th><th>Prevalence</th><th>Brier</th><th>Intercept</th><th>Slope</th><th>Sensitivity</th><th>Specificity</th></tr>
+{% for s,m in r.external.logistic_portable.items() %}<tr><td>{{ s }}</td><td>{{ m.prev }}</td><td>{{ m.brier }}</td><td>{{ m.cal_intercept }}</td><td>{{ m.cal_slope }}</td><td>{{ m.sens }}</td><td>{{ m.spec }}</td></tr>{% endfor %}</table></div>
+<h2>Is it clinically useful? Decision curves</h2><label class="pick">Site <select id="siteSel"></select></label><canvas id="dca" role="img" aria-label="Net benefit across risk thresholds for the selected site." height="120"></canvas>
+<h2>How many local labelled cases repair calibration?</h2><p class="muted">Brier score on unseen local rows after updating with n labelled cases. Lower is better.</p><p id="noupd" class="muted" hidden>This site is too small for the update study.</p><canvas id="upd" role="img" aria-label="Brier score against number of local labelled cases used for updating." height="120"></canvas>
+<div class="scroll"><table><tr><th>Site</th><th>Brier unadjusted</th><th>Brier after prevalence adjustment</th></tr>{% for s,v in r.adjusted.items() %}<tr><td>{{ s }}</td><td>{{ v.raw }}</td><td>{{ v.adj }}</td></tr>{% endfor %}</table></div>
+<h2>Missing data (%)</h2><div class="scroll"><table class="heat"><tr><th></th>{% for c in r.meta.features %}<th>{{ c }}</th>{% endfor %}</tr>
+{% for s,d in r.sites.items() %}<tr><th>{{ s }}</th>{% for c in r.meta.features %}<td style="background:rgba(176,64,48,{{ d.missing[c]/100 }});color:{{ '#fff' if d.missing[c]>50 else 'inherit' }}">{{ d.missing[c]|round|int }}</td>{% endfor %}</tr>{% endfor %}</table></div>
+{% if r.subgroup %}<h2>Subgroups: {{ r.meta.group_col }} (pooled external sites)</h2><div class="scroll"><table><tr><th>Group</th><th>n</th><th>AUC</th><th>Sensitivity</th><th>Specificity</th></tr>
+{% for g,m in r.subgroup.items() %}<tr><td>{{ g }}</td><td>{{ m.n }}</td><td>{{ m.auc }}</td><td>{{ m.sens }}</td><td>{{ m.spec }}</td></tr>{% endfor %}</table></div>{% endif %}
+<script>window.R={{ r|tojson }}</script>
+{% endblock %}{% block s %}<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script><script src="/static/report.js"></script>{% endblock %}

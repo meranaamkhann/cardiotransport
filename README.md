@@ -65,6 +65,18 @@ The image trains on the real data at build time and fails if it cannot get it. W
 | POST | /api/clinic/calibrate | local recalibration from a CSV |
 | GET | /api/clinic/template | CSV template |
 
+## How the two projects are blended
+
+| Layer | Comes from | Where it lives |
+| --- | --- | --- |
+| Patient app: symptom check, referral check, risk-factor check, history, results | CardioLens | `frontend/src/pages`, `backend/app/engine.py`, `wellness.py` |
+| Clinical workspace: patient directory, review notes, clinic calibration | CardioLens, extended | `Patients.tsx`, `Clinic.tsx`, `platform.py` |
+| Accounts, roles, database, audit, rate limiting | New | `platform.py`, `models.py`, `security.py`, `db.py` |
+| Research workspace: external validation, calibration, decision curves, update study, missingness, subgroups, uploads | TransportLab engine, rebuilt as an API and React dashboard | `research_engine.py`, `research_demo.py`, `Research.tsx` |
+| The paper's Cleveland-to-external experiment, full 13 and portable 10 predictors | CardioLens training, shown in the research workspace | `training.py`, `PaperProtocol` |
+
+`reference/transportlab` keeps the original TransportLab project untouched as a reference implementation.
+
 ## Platform layer (v2)
 
 Added on top of the original stateless tool; the public `/api/assess`, `/api/wellness` and clinic calibration endpoints are unchanged.
@@ -79,7 +91,7 @@ Tests: `cd backend && pytest`.
 
 ## Not done yet
 
-React screens for sign-in, patient dashboard, clinical workspace and research dashboard (the API is ready); PDF reports; Alembic migrations (tables are created at start-up); symptom-duration and medical-history fields; appointments; end-to-end browser tests. The reproduction of the paper's exact numbers needs the real UCI files, which could not be downloaded in the build environment.
+PDF reports; frontend unit and browser tests (the backend has 31 tests; the React screens were compiled and served but not browser-tested); Alembic migrations (tables are created at start-up); symptom-duration and medical-history fields; appointments; end-to-end browser tests. The reproduction of the paper's exact numbers needs the real UCI files, which could not be downloaded in the build environment.
 
 ## Limits
 
