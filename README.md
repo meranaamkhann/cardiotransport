@@ -65,6 +65,22 @@ The image trains on the real data at build time and fails if it cannot get it. W
 | POST | /api/clinic/calibrate | local recalibration from a CSV |
 | GET | /api/clinic/template | CSV template |
 
+## Platform layer (v2)
+
+Added on top of the original stateless tool; the public `/api/assess`, `/api/wellness` and clinic calibration endpoints are unchanged.
+
+- Accounts and roles: patient, clinician, clinic administrator, researcher. Public registration only creates patients. Staff are created by an administrator. Roles are enforced on the server and clinicians only see patients of their own clinic.
+- Stored patient assessments (symptom and wellness), history, CSV export, clinician notes with a "reviewed" status, and provenance labels (patient-reported, model-generated, clinician-reviewed).
+- Research engine (from TransportLab): upload a CSV, choose outcome, site and development site, and get external validation, calibration, decision curves, update study, missingness and subgroups. Experiments are stored per researcher and labelled uploaded or synthetic_demo. Decision curves and the update study are additional analyses, not results of the original paper.
+- Audit log, login rate limiting, scrypt password hashing, JWT, upload limits, structured logging, database-aware health check.
+
+Run with Postgres: copy `.env.example` to `.env`, fill it in, then `docker compose --env-file .env up --build`.
+Tests: `cd backend && pytest`.
+
+## Not done yet
+
+React screens for sign-in, patient dashboard, clinical workspace and research dashboard (the API is ready); PDF reports; Alembic migrations (tables are created at start-up); symptom-duration and medical-history fields; appointments; end-to-end browser tests. The reproduction of the paper's exact numbers needs the real UCI files, which could not be downloaded in the build environment.
+
 ## Limits
 
 Records are from the 1980s and every patient was referred for angiography. The tool estimates narrowed arteries, not heart-attack risk. External data had few women and few young people. It is a research prototype and not a medical device.

@@ -11,4 +11,5 @@ def client(tmp_path_factory):
     out = tmp_path_factory.mktemp("artifacts")
     frame, source, quality = data.load_cohorts(force_synthetic=True)
     train(frame, source, quality, out_dir=out, run_paper=False)
-    return TestClient(create_app(out, out / "no-static"))
+    return TestClient(create_app(out, out / "no-static", db_url=f"sqlite:///{out}/test.db",
+                                 secret="test-secret-test-secret-test-secret-1", admin=("admin@clinic.org", "AdminPass12345", "northside")))
