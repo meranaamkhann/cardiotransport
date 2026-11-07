@@ -1,5 +1,6 @@
 import pickle
 import re
+import uuid
 import warnings
 from collections import defaultdict
 from collections.abc import Mapping
@@ -26,13 +27,18 @@ from sklearn.feature_extraction.text import (
 from sklearn.model_selection import GridSearchCV, cross_val_score, train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.svm import LinearSVC
+from sklearn.utils import _align_api_if_sparse
 from sklearn.utils._testing import (
     assert_allclose_dense_sparse,
     assert_almost_equal,
-    fails_if_pypy,
     skip_if_32bit,
 )
-from sklearn.utils.fixes import _IS_PYPY, _IS_WASM, CSC_CONTAINERS, CSR_CONTAINERS
+from sklearn.utils.fixes import (
+    _IS_WASM,
+    CSC_CONTAINERS,
+    CSR_CONTAINERS,
+    _sparse_random_array,
+)
 
 JUNK_FOOD_DOCS = (
     "the pizza pizza beer copyright",
@@ -643,7 +649,6 @@ def test_tfidf_vectorizer_setters():
     assert tv._tfidf.sublinear_tf == tv.sublinear_tf
 
 
-@fails_if_pypy
 def test_hashing_vectorizer():
     v = HashingVectorizer()
     X = v.transform(ALL_FOOD_DOCS)
@@ -658,9 +663,9 @@ def test_hashing_vectorizer():
     assert np.max(X.data) > 0
     assert np.max(X.data) < 1
 
-    # Check that the rows are normalized
-    for i in range(X.shape[0]):
-        assert_almost_equal(np.linalg.norm(X[0].data, 2), 1.0)
+    # Check that the rows are normalized (l2 norm)
+    for row in X:
+        assert_almost_equal(np.linalg.norm(row.data, 2), 1.0)
 
     # Check vectorization with some non-default parameters
     v = HashingVectorizer(ngram_range=(1, 2), norm="l1")
@@ -677,9 +682,9 @@ def test_hashing_vectorizer():
     assert np.min(X.data) > -1
     assert np.max(X.data) < 1
 
-    # Check that the rows are normalized
-    for i in range(X.shape[0]):
-        assert_almost_equal(np.linalg.norm(X[0].data, 1), 1.0)
+    # Check that the rows are normalized (l1 norm)
+    for row in X:
+        assert_almost_equal(np.linalg.norm(row.data, 1), 1.0)
 
 
 def test_feature_names():
@@ -845,7 +850,6 @@ def test_count_binary_occurrences():
     assert X_sparse.dtype == np.float32
 
 
-@fails_if_pypy
 def test_hashed_binary_occurrences():
     # by default multiple occurrences are counted as longs
     test_data = ["aaabc", "abbde"]
@@ -992,7 +996,6 @@ def test_vectorizer_pipeline_cross_validation():
     assert_array_equal(cv_scores, [1.0, 1.0, 1.0])
 
 
-@fails_if_pypy
 def test_vectorizer_unicode():
     # tests that the count vectorizer works with cyrillic.
     document = (
@@ -1048,13 +1051,10 @@ def test_pickling_vectorizer():
         copy = pickle.loads(s)
         assert type(copy) == orig.__class__
         assert copy.get_params() == orig.get_params()
-        if _IS_PYPY and isinstance(orig, HashingVectorizer):
-            continue
-        else:
-            assert_allclose_dense_sparse(
-                copy.fit_transform(JUNK_FOOD_DOCS),
-                orig.fit_transform(JUNK_FOOD_DOCS),
-            )
+        assert_allclose_dense_sparse(
+            copy.fit_transform(JUNK_FOOD_DOCS),
+            orig.fit_transform(JUNK_FOOD_DOCS),
+        )
 
 
 @pytest.mark.parametrize(
@@ -1185,7 +1185,6 @@ def test_non_unique_vocab():
         vect.fit([])
 
 
-@fails_if_pypy
 def test_hashingvectorizer_nan_in_docs():
     # np.nan can appear when using pandas to load text fields from a csv file
     # with missing values.
@@ -1245,7 +1244,7 @@ def test_vectorizer_string_object_as_input(Vectorizer):
 
 @pytest.mark.parametrize("X_dtype", [np.float32, np.float64])
 def test_tfidf_transformer_type(X_dtype):
-    X = sparse.rand(10, 20000, dtype=X_dtype, random_state=42)
+    X = _sparse_random_array((10, 20000), dtype=X_dtype, random_state=42)
     X_trans = TfidfTransformer().fit_transform(X)
     assert X_trans.dtype == X.dtype
 
@@ -1254,7 +1253,7 @@ def test_tfidf_transformer_type(X_dtype):
     "csc_container, csr_container", product(CSC_CONTAINERS, CSR_CONTAINERS)
 )
 def test_tfidf_transformer_sparse(csc_container, csr_container):
-    X = sparse.rand(10, 20000, dtype=np.float64, random_state=42)
+    X = _sparse_random_array((10, 20000), dtype=np.float64, random_state=42)
     X_csc = csc_container(X)
     X_csr = csr_container(X)
 
@@ -1304,8 +1303,6 @@ def test_vectorizers_invalid_ngram_range(vec):
         f"Invalid value for ngram_range={invalid_range} "
         "lower boundary larger than the upper boundary."
     )
-    if isinstance(vec, HashingVectorizer) and _IS_PYPY:
-        pytest.xfail(reason="HashingVectorizer is not supported on PyPy")
 
     with pytest.raises(ValueError, match=message):
         vec.fit(["good news everyone"])
@@ -1325,7 +1322,6 @@ def _check_stop_words_consistency(estimator):
     return estimator._check_stop_words_consistency(stop_words, preprocess, tokenize)
 
 
-@fails_if_pypy
 def test_vectorizer_stop_words_inconsistent():
     lstr = r"\['and', 'll', 've'\]"
     message = (
@@ -1339,18 +1335,19 @@ def test_vectorizer_stop_words_inconsistent():
             vec.fit_transform(["hello world"])
         # reset stop word validation
         del vec._stop_words_id
-        assert _check_stop_words_consistency(vec) is False
+        with pytest.warns(UserWarning, match=message):
+            assert _check_stop_words_consistency(vec) is False
 
-    # Only one warning per stop list
-    with warnings.catch_warnings():
-        warnings.simplefilter("error", UserWarning)
-        vec.fit_transform(["hello world"])
-    assert _check_stop_words_consistency(vec) is None
+        # Only one warning per stop list
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
+            vec.fit_transform(["hello world"])
+        assert _check_stop_words_consistency(vec) is None
 
-    # Test caching of inconsistency assessment
-    vec.set_params(stop_words=["you've", "you", "you'll", "blah", "AND"])
-    with pytest.warns(UserWarning, match=message):
-        vec.fit_transform(["hello world"])
+        # Test caching of inconsistency assessment
+        vec.set_params(stop_words=["you've", "you", "you'll", "blah", "AND"])
+        with pytest.warns(UserWarning, match=message):
+            vec.fit_transform(["hello world"])
 
 
 @skip_if_32bit
@@ -1379,7 +1376,6 @@ def test_countvectorizer_sort_features_64bit_sparse_indices(csr_container):
     assert INDICES_DTYPE == Xs.indices.dtype
 
 
-@fails_if_pypy
 @pytest.mark.parametrize(
     "Estimator", [CountVectorizer, TfidfVectorizer, HashingVectorizer]
 )
@@ -1419,8 +1415,6 @@ def test_stop_word_validation_custom_preprocessor(Estimator):
     ],
 )
 def test_callable_analyzer_error(Estimator, input_type, err_type, err_msg):
-    if issubclass(Estimator, HashingVectorizer) and _IS_PYPY:
-        pytest.xfail("HashingVectorizer is not supported on PyPy")
     data = ["this is text, not file or filename"]
     with pytest.raises(err_type, match=err_msg):
         Estimator(analyzer=lambda x: x.split(), input=input_type).fit_transform(data)
@@ -1431,7 +1425,7 @@ def test_callable_analyzer_error(Estimator, input_type, err_type, err_msg):
     [
         CountVectorizer,
         TfidfVectorizer,
-        pytest.param(HashingVectorizer, marks=fails_if_pypy),
+        pytest.param(HashingVectorizer),
     ],
 )
 @pytest.mark.parametrize(
@@ -1451,9 +1445,6 @@ def test_callable_analyzer_reraise_error(tmpdir, Estimator):
     # check if a custom exception from the analyzer is shown to the user
     def analyzer(doc):
         raise Exception("testing")
-
-    if issubclass(Estimator, HashingVectorizer) and _IS_PYPY:
-        pytest.xfail("HashingVectorizer is not supported on PyPy")
 
     f = tmpdir.join("file.txt")
     f.write("sample content\n")
@@ -1595,7 +1586,6 @@ def test_tie_breaking_sample_order_invariance():
     assert vocab1 == vocab2
 
 
-@fails_if_pypy
 def test_nonnegative_hashing_vectorizer_result_indices():
     # add test for pr 19035
     hashing = HashingVectorizer(n_features=1000000, ngram_range=(2, 3))
@@ -1615,7 +1605,7 @@ def test_vectorizers_do_not_have_set_output(Estimator):
 @pytest.mark.parametrize("csr_container", CSR_CONTAINERS)
 def test_tfidf_transformer_copy(csr_container):
     """Check the behaviour of TfidfTransformer.transform with the copy parameter."""
-    X = sparse.rand(10, 20000, dtype=np.float64, random_state=42)
+    X = _sparse_random_array((10, 20000), dtype=np.float64, random_state=42)
     X_csr = csr_container(X)
 
     # keep a copy of the original matrix for later comparison
@@ -1628,6 +1618,42 @@ def test_tfidf_transformer_copy(csr_container):
     assert X_transform is not X_csr
 
     X_transform = transformer.transform(X_csr, copy=False)
-    assert X_transform is X_csr
+    # allow for config["sparse_interface"] to change output type
+    # there should be no data copied, but the `id` will change.
+    if _align_api_if_sparse(X_csr) is X_csr:
+        assert X_transform is X_csr
+    else:
+        assert X_transform is not X_csr
+        assert X_transform.indptr is X_csr.indptr
+        assert X_transform.indices.base is X_csr.indices.base
+        assert X_transform.data.base is X_csr.data.base
+
     with pytest.raises(AssertionError):
         assert_allclose_dense_sparse(X_csr, X_csr_original)
+
+
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+def test_tfidf_vectorizer_preserve_dtype_idf(dtype):
+    """Check that `idf_` has the same dtype as the input data.
+
+    Non-regression test for:
+    https://github.com/scikit-learn/scikit-learn/issues/30016
+    """
+    X = [str(uuid.uuid4()) for i in range(100_000)]
+    vectorizer = TfidfVectorizer(dtype=dtype).fit(X)
+    assert vectorizer.idf_.dtype == dtype
+
+
+def test_hashing_vectorizer_requires_fit_tag():
+    """Test that HashingVectorizer has requires_fit=False tag."""
+    vectorizer = HashingVectorizer()
+    tags = vectorizer.__sklearn_tags__()
+    assert not tags.requires_fit
+
+
+def test_hashing_vectorizer_transform_without_fit():
+    """Test that HashingVectorizer can transform without fitting."""
+    vectorizer = HashingVectorizer(n_features=10)
+    corpus = ["This is test", "Another test"]
+    result = vectorizer.transform(corpus)
+    assert result.shape == (2, 10)

@@ -117,20 +117,20 @@ def test_all_precomputed():
             assert_array_almost_equal(expected, got)
 
 
+# TODO: remove warning filter when numpy min version >= 2.0.0
 @pytest.mark.filterwarnings("ignore: `rcond` parameter will change")
-# numpy deprecation
 def test_lars_lstsq():
     # Test that Lars gives least square solution at the end
     # of the path
     X1 = 3 * X  # use un-normalized dataset
     clf = linear_model.LassoLars(alpha=0.0)
     clf.fit(X1, y)
-    coef_lstsq = np.linalg.lstsq(X1, y, rcond=None)[0]
+    coef_lstsq = np.linalg.lstsq(X1, y)[0]
     assert_array_almost_equal(clf.coef_, coef_lstsq)
 
 
-@pytest.mark.filterwarnings("ignore:`rcond` parameter will change")
-# numpy deprecation
+# TODO: remove warning filter when numpy min version >= 2.0.0
+@pytest.mark.filterwarnings("ignore: `rcond` parameter will change")
 def test_lasso_gives_lstsq_solution():
     # Test that Lars Lasso gives least square solution at the end
     # of the path
@@ -206,7 +206,7 @@ def test_no_path_all_precomputed():
 
 
 @pytest.mark.parametrize(
-    "classifier", [linear_model.Lars, linear_model.LarsCV, linear_model.LassoLarsIC]
+    "classifier", (linear_model.Lars, linear_model.LarsCV, linear_model.LassoLarsIC)
 )
 def test_lars_precompute(classifier):
     # Check for different values of precompute
@@ -408,7 +408,6 @@ def test_lars_n_nonzero_coefs(verbose=False):
     assert len(lars.alphas_) == 7
 
 
-@ignore_warnings
 def test_multitarget():
     # Assure that estimators receiving multidimensional y do the right thing
     Y = np.vstack([y, y**2]).T
@@ -502,8 +501,8 @@ def test_lars_path_readonly_data():
     # fold data is in read-only mode
     # This is a non-regression test for:
     # https://github.com/scikit-learn/scikit-learn/issues/4597
-    splitted_data = train_test_split(X, y, random_state=42)
-    with TempMemmap(splitted_data) as (X_train, X_test, y_train, y_test):
+    split_data = train_test_split(X, y, random_state=42)
+    with TempMemmap(split_data) as (X_train, X_test, y_train, y_test):
         # The following should not fail despite copy=False
         _lars_path_residues(X_train, y_train, X_test, y_test, copy=False)
 
@@ -740,6 +739,7 @@ def test_lasso_lars_fit_copyX_behaviour(copy_X):
 
 @pytest.mark.parametrize("est", (LassoLars(alpha=1e-3), Lars()))
 def test_lars_with_jitter(est):
+    est = clone(est)  # Avoid side effects from previous tests.
     # Test that a small amount of jitter helps stability,
     # using example provided in issue #2746
 

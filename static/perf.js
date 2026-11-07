@@ -1,4 +1,0 @@
-const M=window.M,S=['Hungary','Switzerland','Long Beach VA','Pooled'],C=['#0e6b73','#b04030','#8a5a00','#4d6a6f'];
-new Chart(auc,{type:'bar',data:{labels:S,datasets:[['port_lr','Portable logistic'],['port_rf','Portable forest']].map(([k,n],i)=>({label:n,backgroundColor:C[i],data:S.map(s=>M.external[k][s].auc)}))},options:{scales:{y:{min:.5,max:1,title:{display:true,text:'AUC'}}}}});
-new Chart(cal,{type:'line',data:{datasets:[...Object.entries(M.calib).map(([k,v],i)=>({label:k,borderColor:C[i],backgroundColor:C[i],data:v.x.map((x,j)=>({x,y:v.y[j]}))})),{label:'Ideal',borderColor:'#999',borderDash:[5,5],pointRadius:0,data:[{x:0,y:0},{x:1,y:1}]}]},
-options:{scales:{x:{type:'linear',min:0,max:1,title:{display:true,text:'Mean predicted probability'}},y:{min:0,max:1,title:{display:true,text:'Observed disease proportion'}}}}});

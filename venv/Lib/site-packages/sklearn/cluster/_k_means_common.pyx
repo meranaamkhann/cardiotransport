@@ -1,15 +1,12 @@
-# Author: Peter Prettenhofer <peter.prettenhofer@gmail.com>
-#         Olivier Grisel <olivier.grisel@ensta.org>
-#         Lars Buitinck
-#
-# License: BSD 3 clause
+# Authors: The scikit-learn developers
+# SPDX-License-Identifier: BSD-3-Clause
 
 import numpy as np
 from cython cimport floating
 from cython.parallel cimport prange
 from libc.math cimport sqrt
 
-from ..utils.extmath import row_norms
+from sklearn.utils.extmath import row_norms
 
 
 # Number of samples per data chunk defined as a global constant.
@@ -30,7 +27,7 @@ cdef floating _euclidean_dense_dense(
         floating result = 0
 
     # We manually unroll the loop for better cache optimization.
-    for i in range(n):
+    for _ in range(n):
         result += (
             (a[0] - b[0]) * (a[0] - b[0]) +
             (a[1] - b[1]) * (a[1] - b[1]) +
