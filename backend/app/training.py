@@ -13,7 +13,7 @@ import statsmodels.api as sm
 from sklearn.compose import ColumnTransformer
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.impute import SimpleImputer
-from sklearn.linear_model import LogisticRegressionCV
+from sklearn.linear_model import LogisticRegression, LogisticRegressionCV
 from sklearn.metrics import brier_score_loss, roc_auc_score
 from sklearn.model_selection import RepeatedStratifiedKFold, StratifiedKFold
 from sklearn.pipeline import Pipeline
@@ -52,7 +52,7 @@ def build(features, kind):
                            ("oh", OneHotEncoder(handle_unknown="ignore", sparse_output=False))]), categorical)],
         sparse_threshold=0)
     if kind == "logistic":
-        clf = LogisticRegressionCV(Cs=[0.05, 0.1, 0.3, 1.0, 3.0],
+        clf = LogisticRegressionCV(Cs=[0.02, 0.05, 0.1, 0.2, 0.3, 0.5, 1.0, 2.0, 5.0],
                                    cv=StratifiedKFold(5, shuffle=True, random_state=SEED),
                                    scoring="neg_log_loss", max_iter=5000)
     else:
@@ -166,38 +166,73 @@ def paper_protocol(frame, rng):
     return out
 
 
-def leave_one_site_out(frame, features):
-    pred = np.zeros(len(frame))
-    for site in SITES:
-        held = (frame["site"] == site).values
-        model = fit(frame[~held], features, "logistic")
-        pred[held] = model.predict_proba(frame[held][features])[:, 1]
-    return pred
-
-
 def group_name(column):
     body = column.split("__", 1)[1]
     return body.rsplit("_", 1)[0] if column.startswith("cat__") else body
 
 
+BOOTSTRAPS = 200
+
+
+def bootstrap_coefficients(features_matrix, y, c_value, rng):
+    coefs, intercepts = [], []
+    for _ in range(BOOTSTRAPS):
+        index = rng.integers(0, len(y), len(y))
+        if y[index].min() == y[index].max():
+            continue
+        model = LogisticRegression(C=c_value, max_iter=2000).fit(features_matrix[index], y[index])
+        coefs.append(model.coef_[0])
+        intercepts.append(model.intercept_[0])
+    return np.array(coefs), np.array(intercepts)
+
+
+def leave_one_site_out(frame, features, kind="logistic"):
+    pred = np.zeros(len(frame))
+    for site in SITES:
+        held = (frame["site"] == site).values
+        model = fit(frame[~held], features, kind)
+        pred[held] = model.predict_proba(frame[held][features])[:, 1]
+    return pred
+
+
+def band_of(p, bands):
+    return np.where(p < bands["lower_cut"], 0, np.where(p < bands["higher_cut"], 1, 2))
+
+
 def deployment(frame, rng):
     y = frame["target"].values
     sites = frame["site"].values
-    pipelines, means, tiers = {}, {}, {}
+    pipelines, forests, means, boot, tiers = {}, {}, {}, {}, {}
     for tier, features in DEPLOY.items():
         pred = leave_one_site_out(frame, features)
+        forest_pred = leave_one_site_out(frame, features, "forest")
         per_site = {s: summarize(y[sites == s], pred[sites == s], rng) for s in SITES}
+        forest_site = {s: summarize(y[sites == s], forest_pred[sites == s], rng) for s in SITES}
         final = fit(frame, features, "logistic")
         pre, clf = final.named_steps["pre"], final.named_steps["clf"]
         names = list(pre.get_feature_names_out())
+        matrix = pre.transform(frame[features])
         pipelines[tier] = final
-        means[tier] = pre.transform(frame[features]).mean(axis=0)
+        forests[tier] = fit(frame, features, "forest")
+        means[tier] = matrix.mean(axis=0)
+        coefs, intercepts = bootstrap_coefficients(matrix, y, float(clf.C_[0]), rng)
+        boot[tier] = {"coef": coefs, "intercept": intercepts}
+        bands = make_bands(y, pred, sites)
+        forest_bands = make_bands(y, forest_pred, sites)
+        same = band_of(pred, bands) == band_of(forest_pred, forest_bands)
         tiers[tier] = {
             "features": features,
             "held_out_site": per_site,
             "held_out_pooled": summarize(y, pred, rng),
+            "forest_held_out_site": forest_site,
+            "forest_held_out_pooled": summarize(y, forest_pred, rng),
             "calibration": {s: calibration_bins(y[sites == s], pred[sites == s]) for s in SITES},
-            "bands": make_bands(y, pred, sites),
+            "bands": bands,
+            "forest_bands": {"lower_cut": forest_bands["lower_cut"], "higher_cut": forest_bands["higher_cut"]},
+            "agreement": {"same_band_pct": rnd(same.mean() * 100, 1),
+                          "disease_rate_when_models_disagree": rnd(y[~same].mean()) if (~same).any() else None,
+                          "disagreements": int((~same).sum())},
+            "bootstrap_models": int(len(intercepts)),
             "regularisation_C": rnd(float(clf.C_[0]), 4),
             "intercept": rnd(float(clf.intercept_[0]), 4),
             "coefficients": [{"term": n.split("__", 1)[1], "feature": group_name(n), "coef": rnd(float(c))}
@@ -206,7 +241,7 @@ def deployment(frame, rng):
     for feature in ("age", "trestbps", "chol", "thalach", "oldpeak"):
         values = frame[feature].dropna()
         reference[feature] = [rnd(values.quantile(0.01), 2), rnd(values.quantile(0.99), 2)]
-    return pipelines, means, tiers, reference
+    return pipelines, forests, means, boot, tiers, reference
 
 
 def cohort_summary(frame):
@@ -224,7 +259,7 @@ def cohort_summary(frame):
 
 def train(frame, source, quality, out_dir=ARTIFACT_DIR, run_paper=True):
     rng = np.random.default_rng(SEED)
-    pipelines, means, tiers, reference = deployment(frame, rng)
+    pipelines, forests, means, boot, tiers, reference = deployment(frame, rng)
     card = {
         "version": MODEL_VERSION,
         "trained_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -237,7 +272,7 @@ def train(frame, source, quality, out_dir=ARTIFACT_DIR, run_paper=True):
         "paper_protocol": paper_protocol(frame, rng) if run_paper else None,
     }
     out_dir.mkdir(parents=True, exist_ok=True)
-    joblib.dump({"pipelines": pipelines, "means": means}, out_dir / "models.joblib")
+    joblib.dump({"pipelines": pipelines, "forests": forests, "means": means, "bootstrap": boot}, out_dir / "models.joblib")
     (out_dir / "model_card.json").write_text(json.dumps(card, indent=2))
     return card
 

@@ -48,10 +48,11 @@ def zero_counts(frame):
     return out
 
 
-def clean(frame):
+def clean(frame, recode_zeros=True):
     frame = frame.copy()
-    frame.loc[frame["chol"] <= 0, "chol"] = np.nan
-    frame.loc[frame["trestbps"] <= 0, "trestbps"] = np.nan
+    if recode_zeros:
+        frame.loc[frame["chol"] <= 0, "chol"] = np.nan
+        frame.loc[frame["trestbps"] <= 0, "trestbps"] = np.nan
     frame["target"] = (frame["num"] > 0).astype(int)
     return frame.reset_index(drop=True)
 
@@ -95,7 +96,11 @@ def synthetic(seed=11):
     return pd.concat(frames, ignore_index=True)
 
 
-def load_cohorts(require_real=False, force_synthetic=False):
+def available_locally():
+    return [site for site in SITES if (DATA_DIR / f"processed.{FILES[site]}.data").exists()]
+
+
+def load_cohorts(require_real=False, force_synthetic=False, recode_zeros=True):
     if not force_synthetic:
         frames = []
         for site in SITES:
@@ -105,9 +110,9 @@ def load_cohorts(require_real=False, force_synthetic=False):
             frames.append(parse(text, site))
         else:
             raw = pd.concat(frames, ignore_index=True)
-            return clean(raw), "uci", zero_counts(raw)
+            return clean(raw, recode_zeros), "uci", zero_counts(raw)
         if require_real:
             raise RuntimeError("UCI Heart Disease files could not be found or downloaded. Place the four "
                                "processed.*.data files in backend/data/raw and run again.")
     raw = synthetic()
-    return clean(raw), "synthetic", zero_counts(raw)
+    return clean(raw, recode_zeros), "synthetic", zero_counts(raw)

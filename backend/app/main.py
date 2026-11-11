@@ -1,99 +1,92 @@
 import logging
-import os
+import time
+from contextlib import asynccontextmanager
 from pathlib import Path
-from types import SimpleNamespace
+from typing import Optional
 
-from sqlalchemy import text
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import clinic
-from .config import ARTIFACT_DIR, DATABASE_URL, SECRET_KEY, STATIC_DIR, TOKEN_MINUTES
-from .db import Base, connect
+from .config import get_settings
+from .core import logging as log_setup
+from .db.base import Base, SessionLocal, engine as db_engine
 from .engine import Engine
-from .models import User
-from .platform import Limiter, build_router
-from .schemas import Assessment, Wellness
-from .security import hash_password
-from .wellness import assess_wellness
+from .routers import admin, auth, clinician, patient, public, research
+from .services import registry
+
+log = logging.getLogger("cardiolens")
+
+SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+    "Permissions-Policy": "geolocation=(), microphone=(), camera=()",
+    "Content-Security-Policy": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'",
+}
 
 
-def create_app(artifact_dir: Path = ARTIFACT_DIR, static_dir: Path = STATIC_DIR, db_url: str = DATABASE_URL,
-               secret: str = SECRET_KEY, admin=None) -> FastAPI:
-    logging.basicConfig(level=logging.INFO, format='{"time":"%(asctime)s","level":"%(levelname)s","msg":"%(message)s"}')
-    app = FastAPI(title="CardioLens", version="2.0.0")
-    db_engine, Session = connect(db_url)
-    Base.metadata.create_all(db_engine)
-    admin = admin or (os.environ.get("CARDIOLENS_ADMIN_EMAIL"), os.environ.get("CARDIOLENS_ADMIN_PASSWORD"),
-                      os.environ.get("CARDIOLENS_CLINIC", "main"))
-    if admin[0] and admin[1]:
-        with Session() as s:
-            if not s.query(User).filter_by(email=admin[0].lower()).first():
-                s.add(User(email=admin[0].lower(), name="Administrator", role="admin", clinic=admin[2],
-                           password_hash=hash_password(admin[1])))
-                s.commit()
-    state = {"engine": None}
+def load_engine(artifact_dir: Path) -> Optional[Engine]:
+    try:
+        engine = Engine(artifact_dir)
+    except FileNotFoundError:
+        log.warning("model artifacts not found in %s", artifact_dir)
+        return None
+    with SessionLocal() as db:
+        registry.sync(db, engine.card)
+    return engine
 
-    def engine() -> Engine:
-        if state["engine"] is None:
-            try:
-                state["engine"] = Engine(artifact_dir)
-            except FileNotFoundError:
-                raise HTTPException(503, "The model has not been trained yet. Run: python -m app.training")
-        return state["engine"]
 
-    app.include_router(build_router(SimpleNamespace(Session=Session, secret=secret, token_minutes=TOKEN_MINUTES,
-                                                    engine=engine, limiter=Limiter(10, 60))))
+def create_app(artifact_dir: Optional[Path] = None, static_dir: Optional[Path] = None, create_tables: bool = False) -> FastAPI:
+    settings = get_settings()
+    artifact_dir = artifact_dir or settings.artifact_dir
+    static_dir = static_dir or settings.static_dir
 
-    @app.get("/api/health")
-    def health():
-        ready = (artifact_dir / "models.joblib").exists() and (artifact_dir / "model_card.json").exists()
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        log_setup.configure()
+        if create_tables or settings.is_sqlite:
+            Base.metadata.create_all(db_engine)
+        app.state.engine = load_engine(artifact_dir)
+        yield
+
+    app = FastAPI(title="CardioLens API", version="2.0.0", lifespan=lifespan, docs_url="/api/docs", openapi_url="/api/openapi.json")
+    app.state.engine = None
+    app.add_middleware(CORSMiddleware, allow_origins=settings.cors_origins, allow_credentials=False,
+                       allow_methods=["*"], allow_headers=["Authorization", "Content-Type"])
+
+    @app.middleware("http")
+    async def observe(request: Request, call_next):
+        started = time.perf_counter()
         try:
-            with Session() as s:
-                s.execute(text("select 1"))
-            database = "ok"
+            response = await call_next(request)
         except Exception:
-            database = "down"
-        return {"status": "ok" if ready and database == "ok" else "degraded", "model": ready, "database": database}
+            log.exception("unhandled error", extra={"method": request.method, "path": request.url.path})
+            response = JSONResponse({"detail": "Internal server error"}, status_code=500)
+        for key, value in SECURITY_HEADERS.items():
+            response.headers.setdefault(key, value)
+        if request.url.path.startswith("/api") and request.url.path != "/api/health":
+            log.info("request", extra={"method": request.method, "path": request.url.path, "status": response.status_code,
+                                       "duration_ms": round((time.perf_counter() - started) * 1000, 1)})
+        return response
 
-    @app.get("/api/model-card")
-    def model_card():
-        return engine().card
+    for module in (public, auth, patient, clinician, admin, research):
+        app.include_router(module.router, prefix="/api")
 
-    @app.post("/api/assess")
-    def assess(payload: Assessment):
-        return engine().assess(payload)
-
-    @app.post("/api/wellness")
-    def wellness(payload: Wellness):
-        return assess_wellness(payload)
-
-    @app.get("/api/clinic/template", response_class=PlainTextResponse)
-    def template():
-        return PlainTextResponse(clinic.template_csv(), media_type="text/csv",
-                                 headers={"Content-Disposition": "attachment; filename=cardiolens_template.csv"})
-
-    @app.post("/api/clinic/calibrate")
-    async def calibrate(file: UploadFile = File(...), site_name: str = Form(default="")):
-        raw = await file.read()
-        try:
-            result = clinic.calibrate(engine(), raw)
-        except ValueError as error:
-            raise HTTPException(422, str(error))
-        result["site_name"] = site_name.strip()[:80]
-        return result
-
-    if static_dir.exists():
+    if static_dir.exists() and (static_dir / "index.html").exists():
         app.mount("/assets", StaticFiles(directory=static_dir / "assets"), name="assets")
 
-        @app.get("/{path:path}")
+        @app.get("/{path:path}", include_in_schema=False)
         def spa(path: str):
+            if path.startswith("api/"):
+                return JSONResponse({"detail": "Not found"}, status_code=404)
             target = (static_dir / path).resolve()
             if path and target.is_file() and static_dir.resolve() in target.parents:
                 return FileResponse(target)
             return FileResponse(static_dir / "index.html")
 
     return app
+
 
 app = create_app()

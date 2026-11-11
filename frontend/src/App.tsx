@@ -1,112 +1,106 @@
-import { useState } from "react";
-import { addHistory, loadHistory } from "./storage";
-import Account from "./pages/Account";
-import Patients from "./pages/Patients";
-import Record from "./pages/Record";
-import Research from "./pages/Research";
-import { getSession, setSession } from "./session";
-import type { Role, Session } from "./session";
-import Check from "./pages/Check";
-import Clinic from "./pages/Clinic";
-import Evidence from "./pages/Evidence";
-import History from "./pages/History";
-import Home from "./pages/Home";
-import { CheckResult, WellnessView } from "./pages/Result";
-import Wellness from "./pages/Wellness";
-import { useRoute } from "./router";
-import type { AssessmentResult, HistoryEntry, WellnessResult } from "./types";
-import { Disclaimer, Notice } from "./ui";
+import { lazy, Suspense, useEffect, useRef } from "react";
+import { Route, Routes, useLocation } from "react-router-dom";
+import RequireRole from "./auth/Guard";
+import { AppShell, PublicLayout } from "./components/Layout";
+import { Spinner } from "./components/ui";
+import { CalibrationPage, PatientDirectory, PatientPage, ReviewQueue, TeamPage } from "./pages/clinic/Workspace";
+import Dashboard from "./pages/patient/Dashboard";
+import { SymptomAssessment, WellnessAssessment } from "./pages/patient/Assess";
+import { Appointments, AssessmentDetail, Assessments, Measurements, ProfilePage } from "./pages/patient/Records";
+import { Login, Register } from "./pages/public/AuthPages";
+import Landing from "./pages/public/Landing";
+import { QuickRun } from "./pages/public/QuickStart";
+import Experiments from "./pages/research/Experiments";
+import { useAuth } from "./auth/AuthContext";
 
-const base = [
-  { path: "/", label: "Home" },
-  { path: "/history", label: "History" },
-  { path: "/evidence", label: "How it works" },
-  { path: "/clinic", label: "For clinics" },
-];
+const HowItWorks = lazy(() => import("./pages/public/HowItWorks"));
+const Compare = lazy(() => import("./pages/research/Compare"));
+const ExperimentDashboard = lazy(() => import("./pages/research/Dashboard"));
+const Datasets = lazy(() => import("./pages/research/Datasets").then((m) => ({ default: m.Datasets })));
+const ModelRegistry = lazy(() => import("./pages/research/Datasets").then((m) => ({ default: m.ModelRegistry })));
 
-const roleNav: Record<Role, { path: string; label: string }> = {
-  patient: { path: "/record", label: "My record" },
-  clinician: { path: "/patients", label: "Patients" },
-  admin: { path: "/patients", label: "Patients" },
-  researcher: { path: "/research", label: "Research" },
-};
+function Missing() {
+  return <div className="card"><h1>Page not found</h1><p className="muted">The page you are looking for does not exist.</p></div>;
+}
 
-const newId = () => Math.random().toString(36).slice(2, 10);
+function ClinicHome() {
+  const { user } = useAuth();
+  return user?.role === "clinic_admin" ? <TeamPage /> : <ReviewQueue />;
+}
+
+function RouteEffects() {
+  const { pathname } = useLocation();
+  const first = useRef(true);
+  useEffect(() => {
+    const announce = first.current;
+    first.current = false;
+    const timer = window.setTimeout(() => {
+      const heading = document.querySelector("main h1");
+      document.title = heading?.textContent ? `${heading.textContent} · CardioLens` : "CardioLens";
+      const active = document.activeElement;
+      const typing = active instanceof HTMLElement && ["INPUT", "TEXTAREA", "SELECT"].includes(active.tagName);
+      const main = document.getElementById("main");
+      if (!announce && main && !typing) {
+        main.setAttribute("tabindex", "-1");
+        main.focus({ preventScroll: true });
+      }
+    }, 60);
+    return () => window.clearTimeout(timer);
+  }, [pathname]);
+  return null;
+}
 
 export default function App() {
-  const [path, go] = useRoute();
-  const [session, setSessionState] = useState<Session | null>(getSession());
-  const [shown, setShown] = useState<HistoryEntry | null>(() => loadHistory()[0] ?? null);
-
-  const finishCheck = (r: AssessmentResult) => {
-    const entry: HistoryEntry = {
-      id: newId(), createdAt: new Date().toISOString(), kind: "check", title: r.headline,
-      subtitle: `Symptom check · ${r.inputs[0].value}, ${r.inputs[1].value.toLowerCase()}`, check: r,
-    };
-    addHistory(entry);
-    setShown(entry);
-    go("/result");
-  };
-
-  const finishWellness = (r: WellnessResult, subtitle: string) => {
-    const entry: HistoryEntry = {
-      id: newId(), createdAt: new Date().toISOString(), kind: "wellness", title: r.headline,
-      subtitle: `Risk factors · ${subtitle}`, wellness: r,
-    };
-    addHistory(entry);
-    setShown(entry);
-    go("/result");
-  };
-
-  const open = (e: HistoryEntry) => {
-    setShown(e);
-    go("/result");
-  };
-
-  const signIn = (s: Session) => {
-    setSessionState(s);
-    go(roleNav[s.role].path);
-  };
-  const signOut = () => {
-    setSession(null);
-    setSessionState(null);
-    go("/");
-  };
-  const nav = session ? [...base, roleNav[session.role]] : base;
-  const gate = (roles: Role[], element: JSX.Element) =>
-    !session ? <Account onDone={signIn} /> : roles.includes(session.role) ? element : <Notice tone="warn" title="Not available">Your account role cannot open this page.</Notice>;
-
-  let page;
-  if (path === "/check/symptomatic") page = <Check key="s" pathway="symptomatic" onResult={finishCheck} />;
-  else if (path === "/check/referred") page = <Check key="r" pathway="referred" onResult={finishCheck} />;
-  else if (path === "/wellness") page = <Wellness onResult={finishWellness} />;
-  else if (path === "/result" && shown?.check) page = <CheckResult r={shown.check} onAgain={() => go("/")} />;
-  else if (path === "/result" && shown?.wellness) page = <WellnessView r={shown.wellness} onAgain={() => go("/")} />;
-  else if (path === "/history") page = <History onOpen={open} />;
-  else if (path === "/evidence") page = <Evidence />;
-  else if (path === "/clinic") page = <Clinic />;
-  else if (path === "/account") page = <Account onDone={signIn} />;
-  else if (path === "/record") page = gate(["patient"], <Record />);
-  else if (path === "/patients") page = gate(["clinician", "admin"], <Patients canReview={session?.role === "clinician"} />);
-  else if (path === "/research") page = gate(["researcher"], <Research />);
-  else page = <Home go={go} />;
-
+  const { loading } = useAuth();
+  if (loading) return <Spinner label="Starting CardioLens" />;
   return (
-    <>
-      <a className="skip" href="#main">Skip to content</a>
-      <header className="top no-print">
-        <button className="brand" onClick={() => go("/")} aria-label="CardioLens home"><span aria-hidden="true">🫀</span> CardioLens</button>
-        <nav aria-label="Main">
-          {nav.map((n) => (
-            <button key={n.path} className={path === n.path ? "active" : ""} onClick={() => go(n.path)} aria-current={path === n.path ? "page" : undefined}>{n.label}</button>
-          ))}
-          {session
-            ? <button onClick={signOut}>Sign out ({session.name})</button>
-            : <button className={path === "/account" ? "active" : ""} onClick={() => go("/account")}>Sign in</button>}
-        </nav>
-      </header>
-      <main id="main" className={["/research", "/patients"].includes(path) ? "wide" : undefined}>{page}</main>
-      <footer className="no-print"><Disclaimer /></footer>
-    </>
+    <Suspense fallback={<Spinner />}>
+    <RouteEffects />
+    <Routes>
+      <Route element={<PublicLayout />}>
+        <Route index element={<Landing />} />
+        <Route path="how-it-works" element={<HowItWorks />} />
+        <Route path="quick-check/:kind?" element={<QuickRun />} />
+        <Route path="login" element={<Login />} />
+        <Route path="register" element={<Register />} />
+        <Route path="register-clinic" element={<Register clinic />} />
+      </Route>
+      <Route element={<RequireRole roles={["patient"]} />}>
+        <Route path="app" element={<AppShell />}>
+          <Route index element={<Dashboard />} />
+          <Route path="symptoms" element={<SymptomAssessment />} />
+          <Route path="wellness" element={<WellnessAssessment />} />
+          <Route path="measurements" element={<Measurements />} />
+          <Route path="assessments" element={<Assessments />} />
+          <Route path="assessments/:id" element={<AssessmentDetail />} />
+          <Route path="appointments" element={<Appointments />} />
+          <Route path="profile" element={<ProfilePage />} />
+        </Route>
+      </Route>
+      <Route element={<RequireRole roles={["clinician", "clinic_admin"]} />}>
+        <Route path="clinic" element={<AppShell />}>
+          <Route index element={<ClinicHome />} />
+          <Route path="calibration" element={<CalibrationPage />} />
+          <Route element={<RequireRole roles={["clinician"]} />}>
+            <Route path="patients" element={<PatientDirectory />} />
+            <Route path="patients/:id" element={<PatientPage />} />
+          </Route>
+          <Route element={<RequireRole roles={["clinic_admin"]} />}>
+            <Route path="team" element={<TeamPage />} />
+          </Route>
+        </Route>
+      </Route>
+      <Route element={<RequireRole roles={["researcher"]} />}>
+        <Route path="research" element={<AppShell />}>
+          <Route index element={<Experiments />} />
+          <Route path="datasets" element={<Datasets />} />
+          <Route path="models" element={<ModelRegistry />} />
+          <Route path="compare" element={<Compare />} />
+          <Route path="experiments/:id" element={<ExperimentDashboard />} />
+        </Route>
+      </Route>
+      <Route path="*" element={<PublicLayout />}><Route path="*" element={<Missing />} /></Route>
+    </Routes>
+    </Suspense>
   );
 }

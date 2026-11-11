@@ -1,98 +1,65 @@
-cd# CardioLens
+# CardioLens
 
-A heart-health guidance tool for the general public, built on a cross-cohort validation study of the UCI Heart Disease data (Cleveland, Hungary, Switzerland, Long Beach VA).
+An AI-assisted heart-health platform for patients, clinicians and researchers. It keeps four kinds of information strictly apart: patient-reported, rule-based triage, model-generated, and clinician-reviewed. It is not a diagnostic system.
 
-It answers one question in plain language: does my situation deserve a closer look by a doctor, and how far can I trust that answer?
+## Model refinements in version 1.1
 
-## What it does
+- Every score carries a plausible range from 200 bootstrap-resampled logistic models, and a wide range lowers the confidence label.
+- A random forest built on the same inputs gives a second opinion. When it places the patient in a different band, the result says so and confidence drops. Its agreement with the logistic model is reported in the model card and the registry.
+- The regularisation grid for the logistic model is finer (nine values) and is chosen by inner cross-validation on log-loss.
+- Accuracy is still reported only as leave-one-hospital-out. Whether these changes improve it on the real UCI records is measured by `python -m app.training`, so check the held-out table it prints.
+- Researchers can compare two completed experiments side by side, for example the paper protocol with and without zero-value recoding.
 
-- Symptom check: plain-language questions turn into a band (lower concern, worth getting checked, see a doctor soon) with the share of similar patients who really had artery blockage, and how that share varied between hospitals.
-- Referral check: the same flow for people sent for a heart check without chest pain.
-- Risk-factor check: rule-based review of blood pressure, cholesterol, sugar, BMI, smoking, activity, using published guideline cut-offs. No prediction is made for people without symptoms.
-- Emergency screen first, plus safety rules that can raise a band but never lower it.
-- Clinic calibration: upload a small labelled CSV and the baseline of the model is shifted to your local disease rate. The file is never stored.
-- Evidence page: leave-one-hospital-out AUC, calibration curves, band statistics, original study protocol, data quality.
-- Privacy by design: the API is stateless and history lives in the browser.
-
-## Design decisions taken from the study
-
-| Finding | Product decision |
+| Area | What it does |
 | --- | --- |
-| Pooled accuracy hides large hospital-to-hospital differences | Every reported number comes from leave-one-hospital-out testing |
-| Calibration shifts with local disease prevalence | Bands and observed rates instead of a single percentage; optional local recalibration |
-| Predictors with 95 to 99 percent missingness cannot be used elsewhere | Only 7 or 10 widely available inputs; unknown inputs are allowed and lower the confidence label |
-| Logistic regression stays better calibrated than a random forest | Deployed model is regularised logistic regression; the forest is kept for the comparison table |
-| Asymptomatic patients in referred data are often disease-positive | The option "no chest pain" exists only on the referral pathway, and the symptom pathway forces a floor for exertional pain |
-| Cholesterol recorded as 0 means not measured | Zeros in cholesterol and blood pressure are recoded to missing before any fitting |
+| Patients | Profile, step-by-step symptom assessment with an emergency pathway and draft saving, wellness (risk-factor) review, measurements with guideline status labels and trends, urgency timeline, appointments, PDF and CSV export, full data download, account deletion, a log of who viewed their record, consent-based clinic sharing, larger-text mode |
+| Clinicians | Review queue ordered by urgency with filters and emergency banner, patient directory and records, clinical review, encrypted notes, appointments, PDF reports, per-clinic model calibration |
+| Clinic administrators | Staff management, audit log, calibration |
+| Researchers | Paper-protocol replication, uploads of multi-site datasets, 4-model cross-hospital validation, calibration, decision curves, recalibration, missing-data and subgroup analysis, PDF and CSV reports, model registry |
+| Public | Landing page, anonymous quick check, evidence page with the model card |
 
-## Run it
+Read `docs/ARCHITECTURE.md` for the design, `docs/RESEARCH.md` for the methodology and the issues found in the paper, and `docs/DEPLOYMENT.md` for operations.
+
+## Run locally
 
 Requirements: Python 3.11+, Node 20+.
 
     cd backend
     pip install -r requirements.txt
-    python -m app.training
-    pytest
+    python -m app.training --skip-paper
+    python -m app.seed
     uvicorn app.main:app --port 8000
 
     cd ../frontend
     npm install
     npm run dev
 
-Open http://localhost:5173. For one command in development run `./run_dev.sh`.
+Open http://localhost:5173. `./run_dev.sh` does all of this in one command.
 
-`python -m app.training` downloads the four processed UCI files (UCI first, Hugging Face mirror second) into `backend/data/raw`. If you are offline, place `processed.cleveland.data`, `processed.hungarian.data`, `processed.switzerland.data` and `processed.va.data` there yourself. Use `--require-real` to refuse the demo fallback, `--skip-paper` for a faster run, `--synthetic` for a throwaway demo model. Any model not trained on the real files shows a demonstration banner in the app.
+`python -m app.training` downloads the four processed UCI files (UCI first, Hugging Face mirror second) into `backend/data/raw`. Offline, place `processed.cleveland.data`, `processed.hungarian.data`, `processed.switzerland.data` and `processed.va.data` there. Use `--require-real` to refuse the synthetic fallback. Any model not trained on the real files shows a demonstration banner in the app.
 
-Quick check of the cholesterol data issue:
+`python -m app.seed` creates a synthetic demo clinic (code `DEMO01`). All accounts use the password `DemoPass123`: `patient1@`, `patient2@`, `patient3@`, `clinician@`, `admin@` and `researcher@demo.cardiolens.test`. Seeding is refused when `CARDIOLENS_ENV=production`.
 
-    python -c "from app import data; r=data.pd.concat([data.parse(data.fetch(s),s) for s in data.FILES]); print((r.chol==0).groupby(r.site).sum())"
+## Run with Docker (PostgreSQL)
 
-## Deploy
+    cp .env.example .env
+    docker compose up --build
 
-    docker build -t cardiolens .
-    docker run -p 7860:7860 cardiolens
+Set `POSTGRES_PASSWORD` and `SECRET_KEY` in `.env`. The app is served on http://localhost:8080. Migrations run on start. Set `ALLOW_SYNTHETIC=1` to build without downloading the UCI files (demonstration only).
 
-The image trains on the real data at build time and fails if it cannot get it. Works on Hugging Face Spaces (Docker).
+## Tests
 
-## API
+    cd backend && python -m pytest        # 66 tests: auth, authorization, assessments, clinic isolation, uncertainty and second opinion, data export and deletion, research methodology, uploads, reports, migrations, end-to-end workflow
+    cd frontend && npm test               # 27 tests: API client, routing, the symptom stepper, draft restore, account deletion, queue filters, run comparison, accessibility preferences, assessment and research views rendered from real API responses
+    cd frontend && npm run build          # type-check and production build
 
-| Method | Path | Purpose |
-| --- | --- | --- |
-| GET | /api/health | readiness |
-| GET | /api/model-card | metrics, bands, coefficients, data quality |
-| POST | /api/assess | symptom or referral assessment |
-| POST | /api/wellness | risk-factor check |
-| POST | /api/clinic/calibrate | local recalibration from a CSV |
-| GET | /api/clinic/template | CSV template |
+## Reproduce the paper
 
-## How the two projects are blended
+Sign in as a researcher, open Experiments, choose Paper protocol with the UCI source and 2000 bootstrap resamples. The run follows the published configuration (Cleveland development cohort, four models, repeated stratified 5-fold CV x 10, seed 20260904, fixed hyperparameters) and prints a side-by-side comparison with the values reported in the paper. A second run with the zero-value recoding switched on shows what changes when impossible cholesterol and blood-pressure values of 0 are treated as missing. That run is labelled a new experiment, not a reproduction.
 
-| Layer | Comes from | Where it lives |
-| --- | --- | --- |
-| Patient app: symptom check, referral check, risk-factor check, history, results | CardioLens | `frontend/src/pages`, `backend/app/engine.py`, `wellness.py` |
-| Clinical workspace: patient directory, review notes, clinic calibration | CardioLens, extended | `Patients.tsx`, `Clinic.tsx`, `platform.py` |
-| Accounts, roles, database, audit, rate limiting | New | `platform.py`, `models.py`, `security.py`, `db.py` |
-| Research workspace: external validation, calibration, decision curves, update study, missingness, subgroups, uploads | TransportLab engine, rebuilt as an API and React dashboard | `research_engine.py`, `research_demo.py`, `Research.tsx` |
-| The paper's Cleveland-to-external experiment, full 13 and portable 10 predictors | CardioLens training, shown in the research workspace | `training.py`, `PaperProtocol` |
+## Honest limits
 
-`reference/transportlab` keeps the original TransportLab project untouched as a reference implementation.
-
-## Platform layer (v2)
-
-Added on top of the original stateless tool; the public `/api/assess`, `/api/wellness` and clinic calibration endpoints are unchanged.
-
-- Accounts and roles: patient, clinician, clinic administrator, researcher. Public registration only creates patients. Staff are created by an administrator. Roles are enforced on the server and clinicians only see patients of their own clinic.
-- Stored patient assessments (symptom and wellness), history, CSV export, clinician notes with a "reviewed" status, and provenance labels (patient-reported, model-generated, clinician-reviewed).
-- Research engine (from TransportLab): upload a CSV, choose outcome, site and development site, and get external validation, calibration, decision curves, update study, missingness and subgroups. Experiments are stored per researcher and labelled uploaded or synthetic_demo. Decision curves and the update study are additional analyses, not results of the original paper.
-- Audit log, login rate limiting, scrypt password hashing, JWT, upload limits, structured logging, database-aware health check.
-
-Run with Postgres: copy `.env.example` to `.env`, fill it in, then `docker compose --env-file .env up --build`.
-Tests: `cd backend && pytest`.
-
-## Not done yet
-
-PDF reports; frontend unit and browser tests (the backend has 31 tests; the React screens were compiled and served but not browser-tested); Alembic migrations (tables are created at start-up); symptom-duration and medical-history fields; appointments; end-to-end browser tests. The reproduction of the paper's exact numbers needs the real UCI files, which could not be downloaded in the build environment.
-
-## Limits
-
-Records are from the 1980s and every patient was referred for angiography. The tool estimates narrowed arteries, not heart-attack risk. External data had few women and few young people. It is a research prototype and not a medical device.
+- The research model learned from 1980s records of patients already referred for angiography. It estimates narrowed arteries, not heart attack risk, and is not a screening tool for the general public.
+- Nothing here has been clinically validated.
+- The login rate limiter and experiment queue live in one process. Scale out only after moving them to Redis or a job queue.
+- Browser end-to-end tests (Playwright) are not included; the end-to-end workflow is tested through the API.

@@ -45,6 +45,8 @@ class Engine:
         bundle = joblib.load(artifact_dir / "models.joblib")
         self.pipelines = bundle["pipelines"]
         self.means = bundle["means"]
+        self.forests = bundle.get("forests", {})
+        self.bootstrap = bundle.get("bootstrap", {})
         self.card = json.loads((artifact_dir / "model_card.json").read_text())
         self.groups = {}
         for tier, pipe in self.pipelines.items():
@@ -66,6 +68,23 @@ class Engine:
             "thalach": a.max_hr if a.max_hr is not None else nan,
             "oldpeak": a.st_depression if a.st_depression is not None else nan,
         }
+
+    def score_range(self, tier, xt):
+        boot = self.bootstrap.get(tier)
+        if not boot or len(boot["intercept"]) < 20:
+            return None
+        z = boot["intercept"] + boot["coef"] @ xt
+        low, high = np.percentile(1 / (1 + np.exp(-np.clip(z, -30, 30))), [5, 95])
+        return [int(round(low * 100)), int(round(high * 100))]
+
+    def second_opinion(self, tier, row, tier_card, model_band):
+        forest = self.forests.get(tier)
+        cuts = tier_card.get("forest_bands")
+        if forest is None or cuts is None:
+            return None
+        q = float(forest.predict_proba(row)[0, 1])
+        band = "lower" if q < cuts["lower_cut"] else "moderate" if q < cuts["higher_cut"] else "higher"
+        return {"band": band, "agrees": band == model_band, "score": int(round(q * 100)), "model": "random forest"}
 
     def readable(self, a: Assessment, features):
         pain = {"typical": "Typical angina pattern", "atypical": "Atypical angina pattern",
@@ -109,8 +128,11 @@ class Engine:
         up = sorted([d for d in drivers if d["log_odds"] > 0], key=lambda d: -d["log_odds"])[:4]
         down = sorted([d for d in drivers if d["log_odds"] < 0], key=lambda d: d["log_odds"])[:4]
 
-        bands = self.card["deployment"][tier]["bands"]
+        tier_card = self.card["deployment"][tier]
+        bands = tier_card["bands"]
         model_band = "lower" if p < bands["lower_cut"] else "moderate" if p < bands["higher_cut"] else "higher"
+        score_range = self.score_range(tier, xt)
+        second = self.second_opinion(tier, row, tier_card, model_band)
         band, reason = model_band, None
         if a.emergency:
             band, reason = "higher", "You reported warning signs."
@@ -135,7 +157,9 @@ class Engine:
             warnings.append("This build uses demonstration data, not the real hospital records.")
 
         missing = [LABELS[f] for f in features if f not in known]
-        penalty = len(missing) + 2 * len([w for w in warnings if "outside" in w])
+        wide = score_range is not None and score_range[1] - score_range[0] > 35
+        disagree = second is not None and not second["agrees"]
+        penalty = len(missing) + 2 * len([w for w in warnings if "outside" in w]) + int(wide) + int(disagree)
         level = "limited" if penalty >= 3 else "fair" if penalty >= 1 or tier == "core" else "good"
         reasons = []
         if missing:
@@ -144,6 +168,10 @@ class Engine:
             reasons.append("No ECG or stress-test values were entered, so a simpler model was used.")
         if any("outside" in w for w in warnings):
             reasons.append("Some values are unusual compared with the reference data.")
+        if wide:
+            reasons.append("The score is uncertain: a different sample of patients could have moved it a lot.")
+        if disagree:
+            reasons.append("A second, differently built model placed you in another band.")
         site_min, site_max = stats["site_min"], stats["site_max"]
 
         title, summary, action = BAND_TEXT[band]
@@ -157,6 +185,8 @@ class Engine:
             "action": action,
             "emergency": {"active": bool(a.emergency), "message": EMERGENCY_TEXT if a.emergency else None},
             "model_score": int(round(p * 100)),
+            "score_range": score_range,
+            "second_opinion": second,
             "local": local,
             "observed": {"n": stats["n"], "rate": stats["rate"], "ci": stats["ci"],
                          "site_min": site_min, "site_max": site_max},

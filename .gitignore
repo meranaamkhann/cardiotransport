@@ -1,10 +1,11 @@
 node_modules
 frontend/dist
+.env
+backend/*.db
 backend/artifacts/*.joblib
 backend/artifacts/model_card.json
 backend/data/raw/*.data
+backend/uploads/*.csv
 __pycache__
 .pytest_cache
 .venv
-.env
-*.db
