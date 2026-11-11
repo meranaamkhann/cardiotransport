@@ -1,0 +1,46 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-cardiolens}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-cardiolens}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cardiolens} -d ${POSTGRES_DB:-cardiolens}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    image: ${API_IMAGE:?}:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      CARDIOLENS_ENV: production
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-cardiolens}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-cardiolens}
+      SECRET_KEY: ${SECRET_KEY:?Set SECRET_KEY in .env}
+      FERNET_KEY: ${FERNET_KEY:-}
+      TRUST_PROXY: "1"
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - uploads:/app/backend/uploads
+      - uci:/app/backend/data/raw
+
+  web:
+    image: ${WEB_IMAGE:?}:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    depends_on:
+      - api
+
+volumes:
+  pgdata:
+  uploads:
+  uci:

@@ -5,9 +5,53 @@ on:
     branches: [main]
   pull_request:
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 jobs:
   backend:
+    name: Backend tests (Python ${{ matrix.python }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - run: python -m pytest -q
+
+  migrations:
+    name: Database migrations
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: cardiolens
+          POSTGRES_PASSWORD: ci-password
+          POSTGRES_DB: cardiolens
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cardiolens -d cardiolens"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      CARDIOLENS_ENV: test
     defaults:
       run:
         working-directory: backend
@@ -19,9 +63,22 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements.txt
       - run: pip install -r requirements.txt
-      - run: python -m pytest -q
+      - name: Models and migrations agree (SQLite)
+        env:
+          DATABASE_URL: sqlite:///./ci-check.db
+        run: |
+          alembic upgrade head
+          alembic check
+      - name: Upgrade, downgrade and upgrade again (PostgreSQL)
+        env:
+          DATABASE_URL: postgresql+psycopg://cardiolens:ci-password@localhost:5432/cardiolens
+        run: |
+          alembic upgrade head
+          alembic downgrade base
+          alembic upgrade head
 
   frontend:
+    name: Frontend tests and build
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -36,11 +93,56 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend/dist
+          retention-days: 7
 
-  images:
-    needs: [backend, frontend]
+  audit:
+    name: Dependency audit (informational)
     runs-on: ubuntu-latest
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
-      - run: docker build --build-arg ALLOW_SYNTHETIC=1 -t cardiolens-api backend
-      - run: docker build -t cardiolens-web frontend
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: pip install pip-audit && pip-audit -r backend/requirements.txt
+      - run: npm audit --audit-level=high
+        working-directory: frontend
+
+  docker:
+    name: Docker build and compose smoke test
+    needs: [backend, migrations, frontend]
+    runs-on: ubuntu-latest
+    env:
+      POSTGRES_PASSWORD: ci-password
+      SECRET_KEY: ci-only-secret-key-not-for-production-use-0123456789
+      ALLOW_SYNTHETIC: "1"
+      WEB_PORT: "8080"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build images and start the stack
+        run: docker compose up -d --build
+      - name: Wait for the API to be ready
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:8080/api/health/ready; then exit 0; fi
+            sleep 3
+          done
+          docker compose logs --tail=100
+          exit 1
+      - name: Smoke test through nginx
+        run: |
+          curl -fsS http://localhost:8080/ | grep -qi "<div id=\"root\">"
+          curl -fsS http://localhost:8080/api/model-card | grep -q "deployment"
+          curl -fsS -o /dev/null -w "%{http_code}\n" http://localhost:8080/app/assessments/1 | grep -q 200
+      - name: Show logs on failure
+        if: failure()
+        run: docker compose logs --tail=200
+      - run: docker compose down -v
+        if: always()
