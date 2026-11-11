@@ -96,5 +96,4 @@ def create_app(artifact_dir: Path = ARTIFACT_DIR, static_dir: Path = STATIC_DIR,
 
     return app
 
-
 app = create_app()

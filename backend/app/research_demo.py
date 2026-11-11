@@ -24,4 +24,3 @@ def synthetic(seed=3):
         frames.append(d)
     return pd.concat(frames, ignore_index=True), dict(
         name="Synthetic multi-hospital demo", target="outcome", site_col="site", dev_site="Hospital A", group_col="sex")
-
